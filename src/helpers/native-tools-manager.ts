@@ -32,8 +32,15 @@ export class NativeToolsManager {
 		requestParams: NativeToolsRequestParams,
 		modelId: string
 	): NativeToolsConfiguration {
-		// Handle disabled native tools
-		if (!this.envSettings.enableNativeTools) {
+		// Request-level override: if the request explicitly enables native tools
+		// or asks for search/url-context, honor it regardless of env defaults.
+		const requestWantsNative =
+			requestParams.enableNativeTools === true ||
+			this.shouldEnableGoogleSearch(requestParams) ||
+			this.shouldEnableUrlContext(requestParams);
+
+		// If env disables native tools AND request doesn't ask for them, fall back to custom-only
+		if (!this.envSettings.enableNativeTools && !requestWantsNative) {
 			return this.createCustomOnlyConfig(customTools);
 		}
 
@@ -41,7 +48,7 @@ export class NativeToolsManager {
 		const searchAndUrlRequested =
 			this.shouldEnableGoogleSearch(requestParams) || this.shouldEnableUrlContext(requestParams);
 
-		if (searchAndUrlRequested) {
+		if (searchAndUrlRequested || requestWantsNative) {
 			return this.createSearchAndUrlConfig(requestParams, customTools, modelId);
 		}
 

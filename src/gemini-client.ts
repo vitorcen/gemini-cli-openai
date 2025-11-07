@@ -482,10 +482,30 @@ export class GeminiApiClient {
 		const toolConfig = nativeToolsManager.determineToolConfiguration(options?.tools || [], nativeToolsParams, modelId);
 
 		// Configure request based on tool strategy
-		const { tools, toolConfig: finalToolConfig } = GenerationConfigValidator.createFinalToolConfiguration(
+		let { tools, toolConfig: finalToolConfig } = GenerationConfigValidator.createFinalToolConfiguration(
 			toolConfig,
 			options
 		);
+
+		// Hard fallback: if request asked for search/native tools but config produced no native tools,
+		// ensure google_search is present to avoid env-related short-circuiting.
+		const reqParams = nativeToolsParams;
+		const wantsNative = reqParams.enableSearch === true || reqParams.enableNativeTools === true;
+		const hasAnyTools = Array.isArray(tools) && tools.length > 0;
+		const hasGoogleSearch = hasAnyTools && (tools as any[]).some((t) => (t as any).google_search);
+		if (wantsNative && !hasGoogleSearch) {
+			const native = [{ google_search: {} } as any];
+			tools = hasAnyTools ? [...(tools as any[]), ...native] : native;
+			console.log("[ToolsFallback] Injected google_search due to request-level enable_search/native");
+		}
+
+		// Debug: summarize outgoing tool configuration
+		try {
+			const toolSummary = Array.isArray(tools)
+				? tools.map((t: any) => (t.google_search ? 'google_search' : t.url_context ? 'url_context' : 'custom_functions')).join(',')
+				: 'none';
+			console.log(`[Tools] configured=${toolSummary} toolConfig=${finalToolConfig ? 'yes' : 'no'}`);
+		} catch {}
 
 		// For thinking models with fake thinking (fallback when real thinking is not enabled or not requested)
 		let needsThinkingClose = false;
@@ -714,6 +734,7 @@ export class GeminiApiClient {
 
 		let hasClosedThinking = false;
 		let hasStartedThinking = false;
+		let loggedSearchMetadata = false;
 
 		for await (const jsonData of this.parseSSEStream(response.body)) {
 			const candidate = jsonData.response?.candidates?.[0];
@@ -808,10 +829,17 @@ export class GeminiApiClient {
 
 						let processedText = part.text;
 						if (nativeToolsManager) {
-							processedText = citationsProcessor.processChunk(
-								part.text,
-								jsonData.response?.candidates?.[0]?.groundingMetadata
-							);
+							const gm = jsonData.response?.candidates?.[0]?.groundingMetadata as any;
+							if (!loggedSearchMetadata && gm && Array.isArray(gm.groundingChunks)) {
+								const sources = gm.groundingChunks.length || 0;
+								const queries = Array.isArray(gm.webSearchQueries) ? gm.webSearchQueries.length : 0;
+								const firstQuery = Array.isArray(gm.webSearchQueries) && gm.webSearchQueries.length > 0 ? gm.webSearchQueries[0] : undefined;
+								if (sources > 0 || queries > 0) {
+									console.log(`[Search] query=${firstQuery ? JSON.stringify(firstQuery) : 'n/a'}, sources=${sources}, queries=${queries}`);
+									loggedSearchMetadata = true;
+								}
+							}
+							processedText = citationsProcessor.processChunk(part.text, gm);
 						}
 						yield { type: "text", data: processedText };
 					}

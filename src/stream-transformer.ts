@@ -139,11 +139,9 @@ export function createOpenAIStreamTransformer(model: string): TransformStream<St
 						}
 					}
 					break;
-				case "native_tool":
-					if (isNativeToolResponse(chunk.data)) {
-						delta.native_tool_calls = [chunk.data];
-					}
-					break;
+                case "native_tool":
+                    // Do not emit non-standard native tool events in OpenAI stream to avoid client breakage
+                    break;
 				case "grounding_metadata":
 					if (chunk.data) {
 						delta.grounding = chunk.data;

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { Env, ChatCompletionRequest, ChatCompletionResponse } from "../types";
+import { Env, ChatCompletionRequest, ChatCompletionResponse, Tool } from "../types";
 import { geminiCliModels, DEFAULT_MODEL, getAllModelIds } from "../models";
 import { OPENAI_MODEL_OWNER } from "../config";
 import { DEFAULT_THINKING_BUDGET } from "../constants";
@@ -11,6 +11,23 @@ import { createOpenAIStreamTransformer } from "../stream-transformer";
  * OpenAI-compatible API routes for models and chat completions.
  */
 export const OpenAIRoute = new Hono<{ Bindings: Env }>();
+
+// Translate client tools into custom tools plus a native search enable flag
+function translateTools(tools: Tool[] | undefined): { customTools: Tool[] | undefined; enableSearch: boolean } {
+    if (!tools || !Array.isArray(tools) || tools.length === 0) {
+        return { customTools: undefined, enableSearch: false };
+    }
+    let enableSearch = false;
+    const customTools = tools.filter((t) => {
+        const name = t.function?.name;
+        if (name === "web_search" || name === "brave_web_search") {
+            enableSearch = true;
+            return false; // remove unsupported tool name for Gemini
+        }
+        return true;
+    });
+    return { customTools: customTools.length > 0 ? customTools : undefined, enableSearch };
+}
 
 // List available models
 OpenAIRoute.get("/models", async (c) => {
@@ -77,11 +94,18 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 			}
 		}
 
-		const tools = body.tools;
 		const tool_choice = body.tool_choice;
 
+		// Translate web_search/brave_web_search -> native search flag + filtered custom tools
+		const translation = translateTools(body.tools as any);
+		const enableGoogleSearch = translation.enableSearch;
+		let tools = translation.customTools as any;
+		if (enableGoogleSearch) {
+			console.log("[ToolTranslation] web_search detected -> enable native Google Search");
+		}
+
 		console.log(
-			`[Parse] model=${model} messageCount=${messages.length} stream=${stream} includeReasoning=${includeReasoning} thinkingBudget=${thinkingBudget} toolsCount=${tools?.length || 0} tool_choice=${tool_choice || "auto"}`
+			`[Parse] model=${model} messageCount=${messages.length} stream=${stream} includeReasoning=${includeReasoning} thinkingBudget=${thinkingBudget} toolsCount=${tools?.length || 0} tool_choice=${tool_choice || "auto"} web_search=${enableGoogleSearch ? "on" : "off"}`
 		);
 
 		if (!messages.length) {
@@ -162,7 +186,8 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 						includeReasoning,
 						thinkingBudget,
 						tools,
-						tool_choice,
+					tool_choice,
+						enable_search: enableGoogleSearch,
 						...generationOptions
 					});
 
@@ -203,7 +228,8 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 					thinkingBudget,
 					tools,
 					tool_choice,
-					...generationOptions
+					enable_search: enableGoogleSearch,
+						...generationOptions
 				});
 
 				const response: ChatCompletionResponse = {
@@ -227,9 +253,9 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 				// Add usage information if available
 				if (completion.usage) {
 					response.usage = {
-						prompt_tokens: completion.usage.inputTokens,
-						completion_tokens: completion.usage.outputTokens,
-						total_tokens: completion.usage.inputTokens + completion.usage.outputTokens + (completion.usage.thinkingTokens || 0)
+						prompt_tokens: completion.usage.inputTokens || 0,
+						completion_tokens: completion.usage.outputTokens || 0,
+						total_tokens: (completion.usage.inputTokens || 0) + (completion.usage.outputTokens || 0) + (completion.usage.thinkingTokens || 0)
 					};
 				}
 
