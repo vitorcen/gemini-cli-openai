@@ -20,6 +20,20 @@ import { NativeToolsManager } from "./helpers/native-tools-manager";
 import { CitationsProcessor } from "./helpers/citations-processor";
 import { GeminiUrlContextMetadata, GroundingMetadata, NativeToolsRequestParams } from "./types/native-tools";
 
+// Helper functions for logging
+const formatTokenCount = (value?: number): string =>
+	typeof value === "number" ? value.toLocaleString("en-US") : "0";
+
+const sumTokenCounts = (...values: Array<number | undefined>): number => {
+	let total = 0;
+	for (const value of values) {
+		if (typeof value === "number" && Number.isFinite(value)) {
+			total += value;
+		}
+	}
+	return total;
+};
+
 // Gemini API response types
 interface GeminiCandidate {
 	content?: {
@@ -596,6 +610,15 @@ export class GeminiApiClient {
 		nativeToolsManager?: NativeToolsManager
 	): AsyncGenerator<StreamChunk> {
 		const citationsProcessor = new CitationsProcessor(this.env);
+
+		// Log request size (only on first attempt, not retries)
+		if (!isRetry) {
+			const requestBody = JSON.stringify(streamRequest);
+			const requestSizeKB = (Buffer.byteLength(requestBody, "utf8") / 1024).toFixed(2);
+			const modelName = (streamRequest as any)?.model || "unknown";
+			console.log(`[Request] model=${modelName} size=${requestSizeKB}KB`);
+		}
+
 		const response = await fetch(`${CODE_ASSIST_ENDPOINT}/${CODE_ASSIST_API_VERSION}:streamGenerateContent?alt=sse`, {
 			method: "POST",
 			headers: {
@@ -796,6 +819,16 @@ export class GeminiApiClient {
 					inputTokens: usage.promptTokenCount || 0,
 					outputTokens: usage.candidatesTokenCount || 0
 				};
+
+				// Log token usage (only if non-zero to avoid logging intermediate empty metadata)
+				const totalTokens = sumTokenCounts(usage.promptTokenCount, usage.candidatesTokenCount);
+				if (totalTokens > 0) {
+					const modelName = originalModel || (streamRequest as any)?.model || "unknown";
+					console.log(
+						`[Response] model=${modelName} usage: prompt=${formatTokenCount(usage.promptTokenCount)} completion=${formatTokenCount(usage.candidatesTokenCount)} total=${formatTokenCount(totalTokens)} tokens`
+					);
+				}
+
 				yield {
 					type: "usage",
 					data: usageData
