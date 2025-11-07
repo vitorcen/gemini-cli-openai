@@ -98,6 +98,9 @@ function isTextContent(content: MessageContent): content is TextContent {
 	return content.type === "text" && typeof content.text === "string";
 }
 
+// Module-level cache for project ID (shared across all instances)
+let cachedProjectId: string | null = null;
+
 /**
  * Handles communication with Google's Gemini API through the Code Assist endpoint.
  * Manages project discovery, streaming, and response parsing.
@@ -105,7 +108,6 @@ function isTextContent(content: MessageContent): content is TextContent {
 export class GeminiApiClient {
 	private env: Env;
 	private authManager: AuthManager;
-	private projectId: string | null = null;
 	private autoSwitchHelper: AutoModelSwitchingHelper;
 
 	constructor(env: Env, authManager: AuthManager) {
@@ -118,25 +120,49 @@ export class GeminiApiClient {
 	 * Discovers the Google Cloud project ID. Uses the environment variable if provided.
 	 */
 	public async discoverProjectId(): Promise<string> {
-		if (this.env.GEMINI_PROJECT_ID) {
-			return this.env.GEMINI_PROJECT_ID;
+		// Check environment variables first (compatible with both naming conventions)
+		const envProjectId = this.env.GEMINI_PROJECT_ID || this.env.GOOGLE_CLOUD_PROJECT;
+		if (envProjectId) {
+			// Only log on first use
+			if (!cachedProjectId) {
+				console.log(`Using project ID from environment: ${envProjectId}`);
+			}
+			cachedProjectId = envProjectId;
+			return envProjectId;
 		}
-		if (this.projectId) {
-			return this.projectId;
+
+		// Return cached value if already discovered (shared across all instances)
+		if (cachedProjectId) {
+			return cachedProjectId;
 		}
 
 		try {
-			const initialProjectId = "default-project";
+			// Call loadCodeAssist with undefined projectId (official CLI behavior)
 			const loadResponse = (await this.authManager.callEndpoint("loadCodeAssist", {
-				cloudaicompanionProject: initialProjectId,
-				metadata: { duetProject: initialProjectId }
+				cloudaicompanionProject: undefined,
+				metadata: {
+					ideType: "IDE_UNSPECIFIED",
+					platform: "PLATFORM_UNSPECIFIED",
+					pluginType: "GEMINI",
+					duetProject: undefined
+				}
 			})) as ProjectDiscoveryResponse;
 
-			if (loadResponse.cloudaicompanionProject) {
-				this.projectId = loadResponse.cloudaicompanionProject;
-				return loadResponse.cloudaicompanionProject;
+			// If user has currentTier, they're already onboarded
+			if (loadResponse.currentTier) {
+				if (loadResponse.cloudaicompanionProject) {
+					cachedProjectId = loadResponse.cloudaicompanionProject;
+					console.log(`Auto-discovered project ID from API: ${loadResponse.cloudaicompanionProject}`);
+					return loadResponse.cloudaicompanionProject;
+				}
+				// Free tier users don't need a project ID (Google manages it)
+				// Use a placeholder that won't be sent to the API
+				cachedProjectId = "free-tier-managed";
+				console.log(`Free tier user detected, using managed project`);
+				return cachedProjectId;
 			}
-			throw new Error("Project ID discovery failed. Please set the GEMINI_PROJECT_ID environment variable.");
+
+			throw new Error("User not onboarded. Please run 'gemini' CLI first to complete setup.");
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			console.error("Failed to discover project ID:", errorMessage);

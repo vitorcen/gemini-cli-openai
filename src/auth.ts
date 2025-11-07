@@ -47,8 +47,14 @@ export class AuthManager {
 	 * Initializes authentication using OAuth2 credentials with KV storage caching.
 	 */
 	public async initializeAuth(): Promise<void> {
-		if (!this.env.GCP_SERVICE_ACCOUNT) {
-			throw new Error("`GCP_SERVICE_ACCOUNT` environment variable not set. Please provide OAuth2 credentials JSON.");
+		const gcpServiceAccount = this.env.GCP_SERVICE_ACCOUNT;
+
+		if (!gcpServiceAccount) {
+			throw new Error(
+				"`GCP_SERVICE_ACCOUNT` environment variable not set. " +
+				"For local development, run `npm run dev` (auto-loads from ~/.gemini/oauth_creds.json). " +
+				"For production, set via environment or `wrangler secret put GCP_SERVICE_ACCOUNT`."
+			);
 		}
 
 		try {
@@ -59,7 +65,7 @@ export class AuthManager {
 				const cachedToken = await this.env.GEMINI_CLI_KV.get(KV_TOKEN_KEY, "json");
 				if (cachedToken) {
 					cachedTokenData = cachedToken as CachedTokenData;
-					console.log("Found cached token in KV storage");
+					// Cached token found (no log for normal operation)
 				}
 			} catch (kvError) {
 				console.log("No cached token found in KV storage or KV error:", kvError);
@@ -70,14 +76,14 @@ export class AuthManager {
 				const timeUntilExpiry = cachedTokenData.expiry_date - Date.now();
 				if (timeUntilExpiry > TOKEN_BUFFER_TIME) {
 					this.accessToken = cachedTokenData.access_token;
-					console.log(`Using cached token, valid for ${Math.floor(timeUntilExpiry / 1000)} more seconds`);
+					// Using cached token (no log for normal operation)
 					return;
 				}
-				console.log("Cached token expired or expiring soon");
+				console.log("Cached token expired or expiring soon, refreshing...");
 			}
 
-			// Parse original credentials from environment
-			const oauth2Creds: OAuth2Credentials = JSON.parse(this.env.GCP_SERVICE_ACCOUNT);
+			// Parse original credentials from environment or file
+			const oauth2Creds: OAuth2Credentials = JSON.parse(gcpServiceAccount);
 
 			// Check if the original token is still valid
 			const timeUntilExpiry = oauth2Creds.expiry_date - Date.now();

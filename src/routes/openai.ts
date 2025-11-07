@@ -142,7 +142,6 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 		// Test authentication first
 		try {
 			await authManager.initializeAuth();
-			console.log("Authentication successful");
 		} catch (authError: unknown) {
 			const errorMessage = authError instanceof Error ? authError.message : String(authError);
 			console.error("Authentication failed:", errorMessage);
@@ -159,7 +158,6 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 			// Asynchronously pipe data from Gemini to transformer
 			(async () => {
 				try {
-					console.log("Starting stream generation");
 					const geminiStream = geminiClient.streamContent(model, systemPrompt, otherMessages, {
 						includeReasoning,
 						thinkingBudget,
@@ -171,7 +169,7 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 					for await (const chunk of geminiStream) {
 						await writer.write(chunk);
 					}
-					console.log("Stream completed successfully");
+					// Stream completed successfully (no log needed, token usage already printed)
 					await writer.close();
 				} catch (streamError: unknown) {
 					const errorMessage = streamError instanceof Error ? streamError.message : String(streamError);
@@ -186,7 +184,6 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 			})();
 
 			// Return streaming response
-			console.log("Returning streaming response");
 			return new Response(openAIStream, {
 				headers: {
 					"Content-Type": "text/event-stream",

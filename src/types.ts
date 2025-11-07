@@ -11,7 +11,8 @@ export type SafetyThreshold =
 // --- Environment Variable Typings ---
 export interface Env {
 	GCP_SERVICE_ACCOUNT: string; // Now contains OAuth2 credentials JSON
-	GEMINI_PROJECT_ID?: string;
+	GEMINI_PROJECT_ID?: string; // Google Cloud Project ID (auto-discovered if not set)
+	GOOGLE_CLOUD_PROJECT?: string; // Alternative env var name (compatible with official gemini CLI)
 	GEMINI_CLI_KV: KVNamespace; // Cloudflare KV for token caching
 	OPENAI_API_KEY?: string; // Optional API key for authentication
 	ENABLE_FAKE_THINKING?: string; // Optional flag to enable fake thinking output (set to "true" to enable)

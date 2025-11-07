@@ -1,0 +1,29 @@
+# Sensitive configuration files (IMPORTANT: Never publish these!)
+.dev.vars
+.env
+.env.*
+
+# Development files
+.wrangler/
+.vscode/
+.idea/
+
+# Git files
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD files
+.github/
+
+# Test files
+*.test.ts
+*.spec.ts
+__tests__/
+
+# Build artifacts (keep src/ and wrangler.toml for users to deploy)
+node_modules/
+
+# Logs
+*.log
+logs/
