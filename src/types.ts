@@ -179,6 +179,7 @@ export interface GeminiFunctionCall {
 export interface UsageData {
 	inputTokens: number;
 	outputTokens: number;
+	thinkingTokens?: number; // Tokens used for model reasoning (when thinking is enabled)
 }
 
 export interface ReasoningData {

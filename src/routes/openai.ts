@@ -229,7 +229,7 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 					response.usage = {
 						prompt_tokens: completion.usage.inputTokens,
 						completion_tokens: completion.usage.outputTokens,
-						total_tokens: completion.usage.inputTokens + completion.usage.outputTokens
+						total_tokens: completion.usage.inputTokens + completion.usage.outputTokens + (completion.usage.thinkingTokens || 0)
 					};
 				}
 

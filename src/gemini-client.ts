@@ -45,6 +45,7 @@ interface GeminiCandidate {
 interface GeminiUsageMetadata {
 	promptTokenCount?: number;
 	candidatesTokenCount?: number;
+	thoughtsTokenCount?: number; // Thinking tokens used by model reasoning
 }
 
 interface GeminiResponse {
@@ -843,15 +844,20 @@ export class GeminiApiClient {
 				const usage = jsonData.response.usageMetadata;
 				const usageData: UsageData = {
 					inputTokens: usage.promptTokenCount || 0,
-					outputTokens: usage.candidatesTokenCount || 0
+					outputTokens: usage.candidatesTokenCount || 0,
+					thinkingTokens: usage.thoughtsTokenCount
 				};
 
 				// Log token usage (only if non-zero to avoid logging intermediate empty metadata)
-				const totalTokens = sumTokenCounts(usage.promptTokenCount, usage.candidatesTokenCount);
+				const totalTokens = sumTokenCounts(usage.promptTokenCount, usage.candidatesTokenCount, usage.thoughtsTokenCount);
 				if (totalTokens > 0) {
 					const modelName = originalModel || (streamRequest as any)?.model || "unknown";
+					const promptStr = `prompt=${formatTokenCount(usage.promptTokenCount)}`;
+					const thinkingStr = usage.thoughtsTokenCount ? ` thinking=${formatTokenCount(usage.thoughtsTokenCount)}` : '';
+					const outputStr = `output=${formatTokenCount(usage.candidatesTokenCount)}`;
+					const totalStr = `total=${formatTokenCount(totalTokens)}`;
 					console.log(
-						`[Response] model=${modelName} usage: prompt=${formatTokenCount(usage.promptTokenCount)} completion=${formatTokenCount(usage.candidatesTokenCount)} total=${formatTokenCount(totalTokens)} tokens`
+						`[Response] model=${modelName} usage: ${promptStr}${thinkingStr} ${outputStr} ${totalStr} tokens`
 					);
 				}
 
