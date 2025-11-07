@@ -187,6 +187,28 @@ export class GenerationConfigValidator {
 		return generationConfig;
 	}
 
+	/**
+	 * Recursively removes all keys starting with '$' from an object.
+	 * This is necessary for Gemini API compatibility as it doesn't support JSON Schema meta-fields.
+	 */
+	private static removeSchemaKeys(obj: unknown): unknown {
+		if (obj === null || typeof obj !== 'object') {
+			return obj;
+		}
+
+		if (Array.isArray(obj)) {
+			return obj.map(item => this.removeSchemaKeys(item));
+		}
+
+		const result: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(obj)) {
+			if (!key.startsWith('$')) {
+				result[key] = this.removeSchemaKeys(value);
+			}
+		}
+		return result;
+	}
+
 	static createValidateTools(options: Partial<ChatCompletionRequest> = {}) {
 		const tools = [];
 		let toolConfig = {};
@@ -194,18 +216,9 @@ export class GenerationConfigValidator {
 		if (Array.isArray(options.tools) && options.tools.length > 0) {
 			const functionDeclarations = options.tools.map((tool) => {
 				let parameters = tool.function.parameters;
-				// Filter parameters for Claude-style compatibility by removing keys starting with '$'
+				// Recursively filter all keys starting with '$' for Gemini API compatibility
 				if (parameters) {
-					const before = parameters;
-					parameters = Object.keys(parameters)
-						.filter((key) => !key.startsWith("$"))
-						.reduce(
-							(after, key) => {
-								after[key] = before[key];
-								return after;
-							},
-							{} as Record<string, unknown>
-						);
+					parameters = this.removeSchemaKeys(parameters) as Record<string, unknown>;
 				}
 				return {
 					name: tool.function.name,
@@ -242,14 +255,11 @@ export class GenerationConfigValidator {
 		toolConfig: unknown | undefined;
 	} {
 		if (config.useCustomTools && config.customTools && config.customTools.length > 0) {
-			const { toolConfig } = this.createValidateTools(options);
+			// Use createValidateTools to properly filter $schema and apply tool config
+			const validated = this.createValidateTools({ ...options, tools: config.customTools });
 			return {
-				tools: [
-					{
-						functionDeclarations: config.customTools.map((t) => t.function)
-					}
-				],
-				toolConfig: toolConfig
+				tools: validated.tools,
+				toolConfig: validated.toolConfig
 			};
 		}
 
