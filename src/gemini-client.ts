@@ -182,12 +182,15 @@ export class GeminiApiClient {
 
 		// Handle tool call results (tool role in OpenAI format)
 		if (msg.role === "tool") {
+			if (!msg.name) {
+				throw new Error("Tool message must include 'name' field to specify the function name");
+			}
 			return {
 				role: "user",
 				parts: [
 					{
 						functionResponse: {
-							name: msg.tool_call_id || "unknown_function",
+							name: msg.name,
 							response: {
 								result: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content)
 							}
@@ -281,6 +284,81 @@ export class GeminiApiClient {
 	}
 
 	/**
+	 * Builds a map of tool_call_id to function name from all messages.
+	 */
+	private buildToolCallMap(messages: ChatMessage[]): Map<string, string> {
+		const toolCallMap = new Map<string, string>();
+
+		for (const msg of messages) {
+			if (msg.role === "assistant" && msg.tool_calls) {
+				for (const toolCall of msg.tool_calls) {
+					toolCallMap.set(toolCall.id, toolCall.function.name);
+				}
+			}
+		}
+
+		return toolCallMap;
+	}
+
+	/**
+	 * Converts messages to Gemini format, merging consecutive tool messages.
+	 * Gemini requires all function responses to be in a single user message following the function calls.
+	 */
+	private convertMessagesToGemini(messages: ChatMessage[]): GeminiFormattedMessage[] {
+		const result: GeminiFormattedMessage[] = [];
+		const toolCallMap = this.buildToolCallMap(messages);
+		let i = 0;
+
+		while (i < messages.length) {
+			const msg = messages[i];
+
+			// If this is a tool message, collect all consecutive tool messages
+			if (msg.role === "tool") {
+				const toolParts: GeminiPart[] = [];
+
+				while (i < messages.length && messages[i].role === "tool") {
+					const toolMsg = messages[i];
+
+					// Get function name from either the name field or by looking up tool_call_id
+					let functionName = toolMsg.name;
+					if (!functionName && toolMsg.tool_call_id) {
+						functionName = toolCallMap.get(toolMsg.tool_call_id);
+					}
+
+					if (!functionName) {
+						throw new Error(
+							`Tool message must include 'name' field or have a valid 'tool_call_id' that matches a previous tool call. ` +
+							`tool_call_id: ${toolMsg.tool_call_id}`
+						);
+					}
+
+					toolParts.push({
+						functionResponse: {
+							name: functionName,
+							response: {
+								result: typeof toolMsg.content === "string" ? toolMsg.content : JSON.stringify(toolMsg.content)
+							}
+						}
+					});
+					i++;
+				}
+
+				// Add all tool responses in a single user message
+				result.push({
+					role: "user",
+					parts: toolParts
+				});
+			} else {
+				// For non-tool messages, convert normally
+				result.push(this.messageToGeminiFormat(msg));
+				i++;
+			}
+		}
+
+		return result;
+	}
+
+	/**
 	 * Validates if the model supports images.
 	 */
 	private validateImageSupport(modelId: string): boolean {
@@ -322,7 +400,7 @@ export class GeminiApiClient {
 		await this.authManager.initializeAuth();
 		const projectId = await this.discoverProjectId();
 
-		const contents = messages.map((msg) => this.messageToGeminiFormat(msg));
+		const contents = this.convertMessagesToGemini(messages);
 
 		if (systemPrompt) {
 			contents.unshift({ role: "user", parts: [{ text: systemPrompt }] });
