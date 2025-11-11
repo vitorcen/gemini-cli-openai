@@ -1,6 +1,6 @@
 {
-  "name": "gemini-cli-openai",
-  "version": "1.0.1",
+  "name": "@vitorcen/gemini-cli-openai",
+  "version": "1.0.3",
   "description": "OpenAI-compatible API for Google Gemini models with OAuth2 authentication",
   "bin": {
     "gemini-cli-openai": "./scripts/cli.js"

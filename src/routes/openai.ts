@@ -12,6 +12,43 @@ import { createOpenAIStreamTransformer } from "../stream-transformer";
  */
 export const OpenAIRoute = new Hono<{ Bindings: Env }>();
 
+// Simple repetition guard: detect if the last assistant message text
+// appeared at least (threshold) times in the recent history.
+function detectRepetition(
+    messages: ChatCompletionRequest["messages"],
+    threshold: number = 3
+): { repeated: boolean; sample?: string } {
+    if (!Array.isArray(messages) || messages.length === 0 || threshold <= 1) return { repeated: false };
+    // find last assistant message
+    let last: string | undefined;
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (m.role === "assistant") {
+            const txt = typeof m.content === "string"
+                ? m.content
+                : Array.isArray(m.content)
+                ? m.content.map((p: any) => p?.text ?? "").join(" ")
+                : "";
+            last = txt.trim();
+            break;
+        }
+    }
+    if (!last) return { repeated: false };
+    let count = 0;
+    const start = Math.max(0, messages.length - 40);
+    for (let j = start; j < messages.length; j++) {
+        const mm = messages[j];
+        if (mm.role !== "assistant") continue;
+        const txt = typeof mm.content === "string"
+            ? mm.content
+            : Array.isArray(mm.content)
+            ? mm.content.map((p: any) => p?.text ?? "").join(" ")
+            : "";
+        if (txt.trim() === last) count++;
+    }
+    return { repeated: count >= threshold, sample: last.slice(0, 120) };
+}
+
 // Translate client tools into custom tools plus a native search enable flag
 function translateTools(tools: Tool[] | undefined): { customTools: Tool[] | undefined; enableSearch: boolean } {
     if (!tools || !Array.isArray(tools) || tools.length === 0) {
@@ -91,6 +128,59 @@ OpenAIRoute.post("/chat/completions", async (c) => {
 					thinkingBudget = 0;
 					includeReasoning = false;
 					break;
+			}
+		}
+
+		// Repetition guard: block repeated assistant output loops
+		const enableRepeatGuard = c.env.ENABLE_REPEAT_GUARD !== "false"; // default on
+		const repeatThreshold = Number(c.env.REPEAT_GUARD_THRESHOLD || 3);
+		if (enableRepeatGuard) {
+			const rep = detectRepetition(messages, isNaN(repeatThreshold) ? 3 : repeatThreshold);
+			if (rep.repeated) {
+				const display = `RepeatGuard: detected identical assistant output repeated >= ${repeatThreshold} times.\nPlease adjust your prompt or stop the loop.\n\nSample: ${rep.sample}`;
+				console.warn(display);
+				// Surface a normal assistant response so CCR UI shows it and stops retrying
+				if (stream) {
+					const { readable, writable } = new TransformStream();
+					const writer = writable.getWriter();
+					const openAITransformer = createOpenAIStreamTransformer(model);
+					const openAIStream = readable.pipeThrough(openAITransformer);
+					(async () => {
+						try {
+							await writer.write({ type: "text", data: `❌ ${display}` });
+						} finally {
+							await writer.close();
+						}
+					})();
+					return new Response(openAIStream, {
+						headers: {
+							"Content-Type": "text/event-stream",
+							"Cache-Control": "no-cache",
+							Connection: "keep-alive"
+						}
+					});
+				} else {
+					const response: ChatCompletionResponse = {
+						id: `chatcmpl-${crypto.randomUUID()}`,
+						object: "chat.completion",
+						created: Math.floor(Date.now() / 1000),
+						model: model,
+						choices: [
+							{
+								index: 0,
+								message: { role: "assistant", content: `❌ ${display}` },
+								finish_reason: "stop"
+							}
+						]
+					};
+					return new Response(JSON.stringify(response), {
+						status: 200,
+						headers: {
+							"Content-Type": "application/json",
+							"X-CCR-Severity": "error"
+						}
+					});
+				}
 			}
 		}
 
